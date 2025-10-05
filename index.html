@@ -14,6 +14,7 @@
         .sidebar { width: var(--sidebar-width); transition: transform 0.3s ease-in-out; }
         .sidebar-link { transition: all 0.2s ease; }
         .sidebar-link:hover, .sidebar-link.active { background-color: #374151; color: white; }
+        #logout-btn:hover { background-color: #c81e1e; }
         .status-badge { padding: 2px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 500; white-space: nowrap; text-transform: capitalize; }
         .status-taslak { background-color: #6b7280; color: #ffffff; }
         .status-planlandı { background-color: #3b82f6; color: #ffffff; }
@@ -50,8 +51,38 @@
 </head>
 <body class="bg-gray-100">
 
+    <!-- Login Overlay -->
+    <div id="login-overlay" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50">
+        <div class="bg-white p-10 rounded-lg shadow-2xl max-w-sm w-full">
+            <!-- Login Form (Initially visible) -->
+            <div id="login-form">
+                <h2 class="text-2xl font-bold text-gray-800 mb-2 text-center">Giriş Yap</h2>
+                <p class="text-gray-600 mb-6 text-center">Hesabınıza erişmek için giriş yapın.</p>
+                <input type="email" id="login-email" placeholder="E-posta Adresi" class="w-full mb-4 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <input type="password" id="login-password" placeholder="Şifre" class="w-full mb-4 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <button id="login-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg w-full">
+                    Giriş Yap
+                </button>
+                <p class="mt-4 text-sm text-center">Hesabınız yok mu? <a href="#" id="show-signup" class="text-blue-600 hover:underline">Hesap Oluştur</a></p>
+            </div>
+
+            <!-- Signup Form (Initially hidden) -->
+            <div id="signup-form" class="hidden">
+                <h2 class="text-2xl font-bold text-gray-800 mb-2 text-center">Hesap Oluştur</h2>
+                <p class="text-gray-600 mb-6 text-center">Yeni bir hesap oluşturun.</p>
+                <input type="email" id="signup-email" placeholder="E-posta Adresi" class="w-full mb-4 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500">
+                <input type="password" id="signup-password" placeholder="Şifre" class="w-full mb-4 px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500">
+                <button id="signup-btn" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg w-full">
+                    Kayıt Ol
+                </button>
+                <p class="mt-4 text-sm text-center">Zaten bir hesabınız var mı? <a href="#" id="show-login" class="text-blue-600 hover:underline">Giriş Yap</a></p>
+            </div>
+        </div>
+    </div>
+
+
     <!-- Sidebar -->
-    <aside class="sidebar fixed top-0 left-0 h-full bg-gray-800 text-gray-300 flex flex-col z-30">
+    <aside id="sidebar" class="sidebar fixed top-0 left-0 h-full bg-gray-800 text-gray-300 flex flex-col z-30 hidden">
         <div class="px-6 py-4 border-b border-gray-700">
             <h1 class="text-2xl font-bold text-white flex items-center">
                 <i class="fab fa-whatsapp text-green-500 mr-3"></i> Owa<span class="text-green-400">Tech</span>
@@ -82,11 +113,14 @@
         </nav>
         <div class="px-4 py-2 border-t border-gray-700">
             <p id="user-id-display" class="text-xs text-gray-500 font-mono truncate" title="Kullanıcı ID">ID: yükleniyor...</p>
+            <button id="logout-btn" class="w-full mt-2 bg-red-600 text-white text-sm py-2 rounded-lg transition-colors duration-200 flex items-center justify-center">
+                 <i class="fas fa-sign-out-alt mr-2"></i> Çıkış Yap
+            </button>
         </div>
     </aside>
 
     <!-- Main Content -->
-    <main class="main-content p-6 sm:p-8">
+    <main id="main-content" class="main-content p-6 sm:p-8 hidden">
         <div id="app-content">
             <!-- RENDERED CONTENT WILL BE HERE -->
         </div>
@@ -108,7 +142,7 @@
 
     // Firebase SDK'ları (Sürüm 12.3.0)
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js";
-    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-auth.js";
+    import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-auth.js";
     import { getFirestore, doc, onSnapshot, setDoc, collection, query, orderBy, addDoc, updateDoc, deleteDoc, serverTimestamp, Timestamp } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js";
     import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/12.3.0/firebase-storage.js";
 
@@ -283,10 +317,15 @@
 
             onAuthStateChanged(state.auth, user => {
                 if (user) {
+                    // User is signed in.
                     if (!state.userId) {
                         state.userId = user.uid;
                         document.getElementById('user-id-display').textContent = `ID: ${user.uid}`;
                         document.getElementById('user-id-display').title = `Kullanıcı ID: ${user.uid}`;
+                        
+                        document.getElementById('login-overlay').classList.add('hidden');
+                        document.getElementById('sidebar').classList.remove('hidden');
+                        document.getElementById('main-content').classList.remove('hidden');
                         
                         setupRealtimeListeners();
                         setInterval(checkAndSendCampaigns, 30 * 1000); 
@@ -294,16 +333,63 @@
                         window.addEventListener('hashchange', handleNavigation);
                         handleNavigation(); 
                     }
+                } else {
+                    // User is signed out.
+                    state.userId = null;
+                    document.getElementById('login-overlay').classList.remove('hidden');
+                    document.getElementById('sidebar').classList.add('hidden');
+                    document.getElementById('main-content').classList.add('hidden');
+                    Object.values(state.listeners).forEach(unsubscribe => unsubscribe());
+                    state.listeners = {};
                 }
             });
-            
-            await signInAnonymously(state.auth);
 
         } catch (error) { 
             console.error("Firebase Hatası:", error); 
             showToast(`Firebase başlatılamadı: ${error.message}`, true); 
         }
     }
+    
+    const handleEmailLogin = async () => {
+        const email = document.getElementById('login-email').value;
+        const password = document.getElementById('login-password').value;
+        if (!email || !password) {
+            showToast("Lütfen e-posta ve şifreyi girin.", true);
+            return;
+        }
+        try {
+            await signInWithEmailAndPassword(state.auth, email, password);
+        } catch (error) {
+            console.error("Giriş hatası:", error);
+            showToast(`Giriş başarısız: ${error.message}`, true);
+        }
+    };
+
+    const handleEmailSignUp = async () => {
+        const email = document.getElementById('signup-email').value;
+        const password = document.getElementById('signup-password').value;
+        if (!email || !password) {
+            showToast("Lütfen e-posta ve şifreyi girin.", true);
+            return;
+        }
+        try {
+            await createUserWithEmailAndPassword(state.auth, email, password);
+        } catch (error) {
+            console.error("Hesap oluşturma hatası:", error);
+            showToast(`Hesap oluşturulamadı: ${error.message}`, true);
+        }
+    };
+
+    const handleLogout = async () => {
+        try {
+            await signOut(state.auth);
+            showToast("Başarıyla çıkış yapıldı.");
+        } catch (error) {
+            console.error("Çıkış hatası:", error);
+            showToast(`Çıkış yapılamadı: ${error.message}`, true);
+        }
+    };
+
 
     function setupRealtimeListeners() {
         const collectionsToListen = ['campaigns', 'templates', 'groups'];
@@ -882,7 +968,7 @@
 
             const qrContainerInitial = document.getElementById('qr-container');
             if (qrContainerInitial && createData.qrcode && createData.qrcode.base64) {
-                 qrContainerInitial.innerHTML = `<img src="data:image/png;base64,${createData.qrcode.base64}" class="mx-auto" alt="QR Kodu Yüklenemedi" onerror="this.alt='QR kod yüklenirken bir hata oluştu.';"><p class="mt-4 text-gray-600">Lütfen WhatsApp ile QR kodu okutun.</p>`;
+                 qrContainerInitial.innerHTML = `<img src="data:image/png;base64,${createData.qrcode.base64}" class="mx-auto" alt="QR Kodu Yüklenemedi" onerror="this.alt='QR kod yüklenirken bir hata oluştu.';"><p class="mt-4 text-gray-600">Lütfen WhatsApp ile QR kodu okutun.</p><textarea class="w-full h-24 mt-4 text-xs bg-gray-100 p-2 rounded" readonly>${createData.qrcode.base64}</textarea>`;
             }
 
             if (isNew && createData.hash && createData.hash.apikey) {
@@ -913,7 +999,7 @@
                         const qrData = await qrRes.json();
                         const currentImg = qrContainer.querySelector('img');
                         if (qrData.base64 && (!currentImg || currentImg.src !== `data:image/png;base64,${qrData.base64}`)) {
-                            qrContainer.innerHTML = `<img src="data:image/png;base64,${qrData.base64}" class="mx-auto" alt="QR Kodu Yüklenemedi"><p class="mt-4 text-gray-600">Lütfen WhatsApp ile QR kodu okutun.</p>`;
+                            qrContainer.innerHTML = `<img src="data:image/png;base64,${qrData.base64}" class="mx-auto" alt="QR Kodu Yüklenemedi"><p class="mt-4 text-gray-600">Lütfen WhatsApp ile QR kodu okutun.</p><textarea class="w-full h-24 mt-4 text-xs bg-gray-100 p-2 rounded" readonly>${qrData.base64}</textarea>`;
                         } else if(connData.state === 'connecting' && !qrContainer.querySelector('.fa-spinner')){
                             qrContainer.innerHTML = `<div class="fas fa-spinner fa-spin text-4xl text-gray-500"></div><p class="mt-4 text-gray-600">Bağlantı kuruluyor, lütfen bekleyin...</p>`;
                         }
@@ -964,7 +1050,29 @@
         renderCurrentPage();
     }
     
-    window.addEventListener('DOMContentLoaded', initializeFirebase);
+    document.addEventListener('DOMContentLoaded', () => {
+        initializeFirebase();
+        document.getElementById('login-btn').addEventListener('click', handleEmailLogin);
+        document.getElementById('signup-btn').addEventListener('click', handleEmailSignUp);
+        document.getElementById('logout-btn').addEventListener('click', handleLogout);
+
+        const loginForm = document.getElementById('login-form');
+        const signupForm = document.getElementById('signup-form');
+        const showSignup = document.getElementById('show-signup');
+        const showLogin = document.getElementById('show-login');
+
+        showSignup.addEventListener('click', (e) => {
+            e.preventDefault();
+            loginForm.classList.add('hidden');
+            signupForm.classList.remove('hidden');
+        });
+
+        showLogin.addEventListener('click', (e) => {
+            e.preventDefault();
+            signupForm.classList.add('hidden');
+            loginForm.classList.remove('hidden');
+        });
+    });
 
 </script>
 </body>
