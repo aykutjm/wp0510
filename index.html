@@ -153,6 +153,8 @@
         collections: { campaigns: [], templates: [], groups: [], settings: { devices: [] } },
         listeners: {}, isSending: false, sendingCampaignId: null,
         qrPollInterval: null,
+        countdownInterval: null,
+        currentQrBlobUrl: null
     };
 
     // --- Toast Notification ---
@@ -188,6 +190,11 @@
         },
         hide() {
             if (state.qrPollInterval) { clearInterval(state.qrPollInterval); state.qrPollInterval = null; }
+            if(state.countdownInterval) { clearInterval(state.countdownInterval); state.countdownInterval = null; }
+            if (state.currentQrBlobUrl) {
+                URL.revokeObjectURL(state.currentQrBlobUrl);
+                state.currentQrBlobUrl = null;
+            }
             const backdrop = document.getElementById('modal-backdrop');
             if (backdrop) {
                 const content = document.getElementById('modal-content');
@@ -210,7 +217,7 @@
 
     // --- Campaign Sending Logic (REAL) ---
     async function checkAndSendCampaigns() {
-        if (state.isSending) return;
+        if (state.isSending || !state.userId) return;
         const now = new Date();
         const campaignsToStart = state.collections.campaigns.filter(c => c.status === 'planlandı' && c.schedule?.[0]?.sendTime.toDate() <= now);
 
@@ -931,8 +938,31 @@
         }
     }
 
+    function base64ToBlobUrl(base64Data) {
+        try {
+            // Strip off the data URI scheme if it exists
+            const base64String = base64Data.split(',')[1] || base64Data;
+            const byteCharacters = atob(base64String);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let i = 0; i < byteCharacters.length; i++) {
+                byteNumbers[i] = byteCharacters.charCodeAt(i);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], {type: 'image/png'});
+            return URL.createObjectURL(blob);
+        } catch (e) {
+            console.error("Base64 to Blob conversion failed:", e);
+            return null;
+        }
+    }
+
+
     async function connectDevice(device, isNew = false) {
         if (!isApiConfigured()) return;
+        
+        // Clear previous intervals if any
+        if (state.countdownInterval) clearInterval(state.countdownInterval);
+        if (state.qrPollInterval) clearInterval(state.qrPollInterval);
 
         ModalManager.show({
             title: `Cihaz Bağlanıyor: ${device.cihazAdi}`,
@@ -942,6 +972,50 @@
         });
         document.getElementById('modal-cancel-btn').onclick = ModalManager.hide;
         
+        const qrContainer = document.getElementById('qr-container');
+
+        const startCountdown = () => {
+            let timeLeft = 60;
+            const timerElement = document.createElement('p');
+            timerElement.className = "mt-2 text-sm text-gray-500";
+            qrContainer.appendChild(timerElement);
+
+            state.countdownInterval = setInterval(() => {
+                if (timeLeft > 0) {
+                    timerElement.textContent = `Bu kod ${timeLeft} saniye içinde zaman aşımına uğrayacak.`;
+                    timeLeft--;
+                } else {
+                    clearInterval(state.countdownInterval);
+                    clearInterval(state.qrPollInterval);
+                    state.qrPollInterval = null;
+                    qrContainer.innerHTML = `
+                        <p class="text-red-500 font-medium">QR Kodu zaman aşımına uğradı.</p>
+                        <button id="refresh-qr-btn" class="mt-4 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg">
+                            <i class="fas fa-sync-alt mr-2"></i> Yeni Kod Al
+                        </button>
+                    `;
+                    document.getElementById('refresh-qr-btn').onclick = () => connectDevice(device, false);
+                }
+            }, 1000);
+        };
+
+        const updateQrDisplay = (base64) => {
+            if (state.currentQrBlobUrl) URL.revokeObjectURL(state.currentQrBlobUrl);
+            
+            const blobUrl = base64ToBlobUrl(base64);
+            if (blobUrl) {
+                state.currentQrBlobUrl = blobUrl;
+                qrContainer.innerHTML = `
+                    <img src="${blobUrl}" class="mx-auto" alt="QR Kodu Yüklenemedi">
+                    <p class="mt-4 text-gray-600">Lütfen WhatsApp ile QR kodu okutun.</p>
+                `;
+                if (state.countdownInterval) clearInterval(state.countdownInterval);
+                startCountdown();
+            } else {
+                qrContainer.innerHTML = `<p class="text-red-500">QR Kodu oluşturulamadı.</p>`;
+            }
+        };
+
         try {
             const createRes = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
                 method: 'POST',
@@ -966,9 +1040,8 @@
                 throw new Error(`Instance oluşturulamadı. Detay: ${errorDetails}`);
             }
 
-            const qrContainerInitial = document.getElementById('qr-container');
-            if (qrContainerInitial && createData.qrcode && createData.qrcode.base64) {
-                 qrContainerInitial.innerHTML = `<img src="data:image/png;base64,${createData.qrcode.base64}" class="mx-auto" alt="QR Kodu Yüklenemedi" onerror="this.alt='QR kod yüklenirken bir hata oluştu.';"><p class="mt-4 text-gray-600">Lütfen WhatsApp ile QR kodu okutun.</p><textarea class="w-full h-24 mt-4 text-xs bg-gray-100 p-2 rounded" readonly>${createData.qrcode.base64}</textarea>`;
+            if (createData.qrcode && createData.qrcode.base64) {
+                 updateQrDisplay(createData.qrcode.base64);
             }
 
             if (isNew && createData.hash && createData.hash.apikey) {
@@ -976,20 +1049,23 @@
                 const currentDevices = state.collections.settings.devices || [];
                 await saveDevices([...currentDevices, device]);
             }
+            
+            let lastBase64 = createData.qrcode?.base64 || '';
 
-            if(state.qrPollInterval) clearInterval(state.qrPollInterval);
             state.qrPollInterval = setInterval(async () => {
                 try {
                     const connRes = await fetch(`${EVOLUTION_API_URL}/instance/connectionState/${device.instanceName}`, { headers: { 'apikey': EVOLUTION_API_KEY } });
                     const connData = await connRes.json();
                     
-                    const qrContainer = document.getElementById('qr-container');
-                    if (!qrContainer) {
-                        clearInterval(state.qrPollInterval); state.qrPollInterval = null; return;
+                    if (!document.getElementById('qr-container')) {
+                        clearInterval(state.qrPollInterval); 
+                        clearInterval(state.countdownInterval);
+                        return;
                     }
 
                     if (connData.state === 'open') {
-                        clearInterval(state.qrPollInterval); state.qrPollInterval = null;
+                        clearInterval(state.qrPollInterval);
+                        clearInterval(state.countdownInterval);
                         const updatedDevices = (state.collections.settings.devices || []).map(d => d.id === device.id ? { ...d, status: 'connected' } : d);
                         await saveDevices(updatedDevices);
                         ModalManager.hide();
@@ -997,16 +1073,19 @@
                     } else {
                         const qrRes = await fetch(`${EVOLUTION_API_URL}/instance/connect/${device.instanceName}`, { headers: { 'apikey': EVOLUTION_API_KEY } });
                         const qrData = await qrRes.json();
-                        const currentImg = qrContainer.querySelector('img');
-                        if (qrData.base64 && (!currentImg || currentImg.src !== `data:image/png;base64,${qrData.base64}`)) {
-                            qrContainer.innerHTML = `<img src="data:image/png;base64,${qrData.base64}" class="mx-auto" alt="QR Kodu Yüklenemedi"><p class="mt-4 text-gray-600">Lütfen WhatsApp ile QR kodu okutun.</p><textarea class="w-full h-24 mt-4 text-xs bg-gray-100 p-2 rounded" readonly>${qrData.base64}</textarea>`;
+                        
+                        if (qrData.base64 && qrData.base64 !== lastBase64) {
+                            lastBase64 = qrData.base64;
+                            updateQrDisplay(qrData.base64);
                         } else if(connData.state === 'connecting' && !qrContainer.querySelector('.fa-spinner')){
+                            clearInterval(state.countdownInterval);
                             qrContainer.innerHTML = `<div class="fas fa-spinner fa-spin text-4xl text-gray-500"></div><p class="mt-4 text-gray-600">Bağlantı kuruluyor, lütfen bekleyin...</p>`;
                         }
                     }
                 } catch(pollError) {
                     console.error("Polling error:", pollError);
-                    clearInterval(state.qrPollInterval); state.qrPollInterval = null;
+                    clearInterval(state.qrPollInterval);
+                    clearInterval(state.countdownInterval);
                 }
             }, 5000);
 
